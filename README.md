@@ -9,7 +9,7 @@ The container is based ubuntu, and LXQt is used for desktop environment.
 ### Deployment
 
 ```
-docker run
+docker run  shunyasasaki/ubuntu-desktop -p <your ssh port>:22 -p <your rdp port> -v <your ssh pub key path> /home/developer/.ssh/authorized_keys
 ```
 
 
