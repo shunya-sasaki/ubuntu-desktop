@@ -6,13 +6,13 @@ RUN apt update -y && apt upgrade -y && rm -rf /var/lib/apt/lists/*
 # Basic
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt update -y && apt install -y \
-        sudo apt-utils net-tools\
-        wget curl git \
-        gcc g++ gfortran golang make \
-        vim \
-        supervisor openssh-server \
-        xrdp lxqt-core \
-        ibus-mozc language-pack-ja \
+    sudo apt-utils net-tools tzdata \
+    wget curl git \
+    gcc g++ gfortran golang make \
+    vim \
+    supervisor openssh-server \
+    xrdp lxqt-core \
+    firefox \
     && \
     unset DEBIAN_FRONTEND && \
     rm -rf /var/lib/apt/lists/*
@@ -20,30 +20,36 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 # Node
 RUN curl -sL https://deb.nodesource.com/setup_lts.x | bash -
 RUN apt install -y nodejs
+
 # Python
 ARG PYTHON_VERSION=3.9
-RUN apt install -y python3 python3-pip python3-venv
-RUN apt install -y python${PYTHON_VERSION} \
-                   python${PYTHON_VERSION}-dev \
-                   python${PYTHON_VERSION}-venv
+RUN apt install -y python3-pip \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-venv
 
-RUN sed -i -e 's/http:\/\/jp.archive.ubuntu/http:\/\/archive.ubuntu/g' /etc/apt/sources.list
+# Language
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt update -y && apt install -y \
+    ibus-mozc language-pack-ja language-pack-ja-base\
+    fonts-noto fonts-noto-cjk \
+    fonts-takao fonts-roboto \
+    && \
+    unset DEBIAN_FRONTEND && \
+    rm -rf /var/lib/apt/lists/*
+
+
+# RUN update-locale LANG=ja_JP.UTF8
 
 # sshd serverconfig -----------------------------------------------------------
-RUN mkdir /var/run/sshd && \
-    sed -e 's/^new_cursors=true/new_cursors=false/g' -i /etc/xrdp/xrdp.ini && \
-    sed -e 's/test -x \/etc\/X11\/Xsession/# test -x \/etc\/X11\/Xsession/g' \
-        -i  /etc/xrdp/startwm.sh && \
-    sed -e 's/exec \/bin\/sh \/etc\/x11\/Xsession/# exec \/bin\/sh \/etc\/x11\/Xsession/g' \
-        -i /etc/xrdp/startwm.sh && \
-    echo '' >> /etc/xrdp/startwm.sh && \
-    echo 'unset DBUS_SESSION_BUS_ADDRESS' >> /etc/xrdp/startwm.sh && \
-    echo 'exec lxqt-session' >> /etc/xrdp/startwm.sh && \
-    echo "test -x /etc/X11/Xsession && exec /etc/X11/Xsession" \
-         >> /etc/xrdp/startwm.sh && \
-    echo "exec /bin/sh /etc/X11/Xsession" >> /etc/xrdp/startwm.sh && \
-    gpasswd -a xrdp ssl-cert
+RUN mkdir /usr/local/setup
+COPY ./root_setup_scripts/* /usr/local/setup/
+RUN bash /usr/local/setup/install_vscode.sh
+RUN bash /usr/local/setup/install_google-chrome.sh
+RUN bash /usr/local/setup/setup_xrdp.sh
+RUN mkdir /var/run/sshd
 
+RUN sed -i -e 's/http:\/\/jp.archive.ubuntu/http:\/\/archive.ubuntu/g' /etc/apt/sources.list
 
 # User ========================================================================
 ARG USER_NAME=developer
@@ -55,18 +61,13 @@ RUN useradd -m ${USER_NAME} && \
 USER ${USER_NAME}
 
 # gui system setting
+RUN mkdir /home/${USER_NAME}/.setup
+COPY ./user_setup_scripts/* /home/${USER_NAME}/.setup
+RUN sh /home/${USER_NAME}/.setup/setup_ibus.sh
 RUN echo 'startlxqt' > /home/${USER_NAME}/.xsessionrc
-RUN echo 'export GTK_IM_MODULE=ibus' >> /home/${USER_NAME}/.bashrc && \
-    echo 'export XMODIFIERS=@im=ibus' >> /home/${USER_NAME}/.bashrc && \
-    echo 'export QT_IM_MODULE=ibus' >> /home/${USER_NAME}/.bashrc && \
-    mkdir -p /home/${USER_NAME}/.config/autostart && \
-    echo '[Desktop Entry]' > /home/${USER_NAME}/.config/autostart/ibus.desktop && \
-    echo 'Exec=ibus-daemon -rdx' >> /home/${USER_NAME}/.config/autostart/ibus.desktop && \
-    echo 'Name=ibus' >> /home/${USER_NAME}/.config/autostart/ibus.desktop && \
-    echo 'OnlyShowIn=LXQt;' >> /home/${USER_NAME}/.config/autostart/ibus.desktop && \
-    echo 'Type=Application' >> /home/${USER_NAME}/.config/autostart/ibus.desktop && \
-    echo 'Version=1.0' >> /home/${USER_NAME}/.config/autostart/ibus.desktop & \
-    im-config -n ibus
+RUN echo 'export DONT_PROMPT_WSL_INSTALL=1' >> /home/${USER_NAME}/.bashrc
+RUN sh /home/${USER_NAME}/.setup/install_vscode-extensions.sh
+
 
 # python
 ARG VIRTUAL_ENV=py39
@@ -77,13 +78,12 @@ RUN /home/${USER_NAME}/.venv/${VIRTUAL_ENV}/bin/python -m pip install --upgrade 
     /home/${USER_NAME}/.venv/${VIRTUAL_ENV}/bin/python -m pip install jupyter jupyterlab \
     autopep8 yapf pylint rope jedi flake8 \
     numpy pandas scipy scikit-learn statsmodels sympy \
-    matplotlib seaborn \
+    matplotlib seaborn bokeh \
     openpyxl xlrd \
     sphinx sphinx_rtd_theme \
     sqlalchemy \
     pytest pytest-html pytest-cov \
     tensorflow qiskit
-RUN /home/${USER_NAME}/.venv/${VIRTUAL_ENV}/bin/python -m pip install tensorflow
 
 # jupyter
 RUN /home/${USER_NAME}/.venv/${VIRTUAL_ENV}/bin/jupyter lab --generate-config && \
@@ -98,7 +98,9 @@ RUN /home/${USER_NAME}/.venv/${VIRTUAL_ENV}/bin/python -c \
     awk '{print "c.ServerApp.password = \""$1"\""}' >> ~/.jupyter/jupyter_lab_config.py
 
 
+
 USER root
+
 RUN service xrdp stop && service ssh stop
 
 RUN echo root:rootpass | chpasswd
@@ -106,4 +108,6 @@ EXPOSE 22
 EXPOSE 3389
 EXPOSE 8888
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-CMD ["/usr/bin/supervisord"]
+# CMD ["/usr/bin/supervisord"]
+COPY ./entrypoint.sh /usr/local/entrypoint.sh
+ENTRYPOINT [ "bash", "/usr/local/entrypoint.sh" ]
